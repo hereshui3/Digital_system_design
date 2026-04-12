@@ -1,0 +1,6 @@
+set_property PACKAGE_PIN P17 [get_ports clk]
+set_property IOSTANDARD LVCMOS33 [get_ports clk]
+set_property PACKAGE_PIN F6 [get_ports {led_out[0]}]
+set_property PACKAGE_PIN G4 [get_ports {led_out[1]}]
+set_property IOSTANDARD LVCMOS33 [get_ports {led_out[0]}]
+set_property IOSTANDARD LVCMOS33 [get_ports {led_out[1]}]

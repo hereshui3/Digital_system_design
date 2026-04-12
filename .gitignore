@@ -1,0 +1,24 @@
+# Ignore everything by default
+*
+
+# Allow directory traversal
+!*/
+
+# Exclude common Vivado generated outputs
+**/.Xil/
+**/*.runs/
+**/*.sim/
+**/*.cache/
+**/*.gen/
+**/*.hw/
+**/*.ip_user_files/
+**/*.jou
+**/*.log
+build/
+
+# Keep only HDL and constraint sources
+!**/*.v
+!**/*.xdc
+
+# Keep repository ignore file
+!.gitignore
