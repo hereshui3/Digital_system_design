@@ -84,6 +84,19 @@ module game_logic (
     reg [8:0] frac_sum;
     wire [11:0] move_step_12 = move_step;
 
+    localparam integer LOGO_W = 128;
+    localparam integer LOGO_H = 128;
+    localparam integer LOGO_X = 8;
+    localparam integer LOGO_Y = 8;
+    localparam integer LOGO_SIZE = LOGO_W * LOGO_H;
+    reg [11:0] logo_mem [0:LOGO_SIZE-1];
+    integer logo_addr;
+    reg [11:0] logo_rgb;
+
+    initial begin
+        $readmemh("logo_rgb444.mem", logo_mem);
+    end
+
     wire [9:0] player_height = crouch_active ? CROUCH_HEIGHT : PLAYER_HEIGHT;
     wire [9:0] player_bottom = player_y + player_height;
     wire signed [11:0] player_x_s = $signed({1'b0, player_x});
@@ -652,6 +665,12 @@ module game_logic (
         if (!video_on)
             rgb = 12'h000;
         else begin
+            logo_rgb = 12'h000;
+            if (x >= LOGO_X && x < (LOGO_X + LOGO_W) && y >= LOGO_Y && y < (LOGO_Y + LOGO_H)) begin
+                logo_addr = (y - LOGO_Y) * LOGO_W + (x - LOGO_X);
+                logo_rgb = logo_mem[logo_addr];
+            end
+
             // Default background (Sky)
             rgb = SKY_COLOR;
 
@@ -826,6 +845,9 @@ module game_logic (
 
             // Start screen
             if (game_state == 0) begin
+                if (x >= LOGO_X && x < (LOGO_X + LOGO_W) && y >= LOGO_Y && y < (LOGO_Y + LOGO_H))
+                    rgb = logo_rgb;
+
                 if (x >= 10'd110 && x < 10'd530 && y >= 10'd120 && y < 10'd300)
                     rgb = 12'hCEF;
 
