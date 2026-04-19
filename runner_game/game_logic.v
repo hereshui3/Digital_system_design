@@ -11,7 +11,7 @@ module game_logic (
     output [15:0] score_out   // 4-digit BCD score: {thousands, hundreds, tens, ones}
 );
 
-    // Game constants
+    // 游戏参数：决定地面、角色、速度和随机间隔的基础设定
     parameter GROUND_Y = 400;
     parameter GROUND_COLOR = 12'h0A0;
     parameter SKY_COLOR = 12'h8CF;
@@ -31,7 +31,8 @@ module game_logic (
     parameter TERRAIN_GAP_MAX = 148;
     parameter TERRAIN_GAP_RANGE = TERRAIN_GAP_MAX - TERRAIN_GAP_MIN + 1;
 
-    // Game state
+    // 运行状态：保存玩家、障碍、地形、云朵和分数等动态信息
+    // 这一段变量基本覆盖了游戏运行时需要持续更新的所有对象
     reg [9:0] player_x;
     reg [9:0] player_y;
     reg signed [9:0] player_vy;
@@ -74,16 +75,19 @@ module game_logic (
     wire [7:0] score_ch_tens      = 8'h30 + {4'b0000, score_tens};
     wire [7:0] score_ch_ones      = 8'h30 + {4'b0000, score_ones};
 
+    // 伪随机数发生器：用于决定下一段障碍和地形的类型、间隔和变体
     reg [7:0] lfsr;
     reg [7:0] passed_counter;
     reg [20:0] frame_clk_div;
     reg [15:0] dist_accum;
     reg speed_accel_phase;
 
+    // 每帧实际移动的像素步长：由定点速度换算得到
     reg [11:0] move_step;
     reg [8:0] frac_sum;
     wire [11:0] move_step_12 = move_step;
 
+    // 起始界面Logo：从ROM里读出图片数据，直接按像素显示
     localparam integer LOGO_W = 128;
     localparam integer LOGO_H = 128;
     localparam integer LOGO_X = 8;
@@ -97,6 +101,8 @@ module game_logic (
         $readmemh("logo_rgb444.mem", logo_mem);
     end
 
+    // 根据是否下蹲，动态切换角色高度
+    // 玩家当前高度会随下蹲状态变化
     wire [9:0] player_height = crouch_active ? CROUCH_HEIGHT : PLAYER_HEIGHT;
     wire [9:0] player_bottom = player_y + player_height;
     wire signed [11:0] player_x_s = $signed({1'b0, player_x});
@@ -104,7 +110,8 @@ module game_logic (
     wire signed [11:0] obstacle_width_s = $signed({2'b00, obstacle_width});
     wire signed [11:0] terrain_width_s = $signed({2'b00, terrain_width});
 
-    // Main obstacle families; randomized on each respawn
+    // 障碍物分类：每次重生时用随机数决定类型和变体
+    // 不同类型会对应不同宽高、颜色和碰撞规则
     wire obstacle_has_second =
         (obstacle_type == 3'd3) || (obstacle_type == 3'd7) ||
         ((obstacle_type[1:0] == 2'b10) && obstacle_variant[1]);
@@ -131,7 +138,8 @@ module game_logic (
     wire terrain_is_rise = (terrain_type == 3'd0) || (terrain_type == 3'd1);
     wire terrain_is_canyon = (terrain_type == 3'd2) || (terrain_type == 3'd3);
 
-    // Terrain feature geometry - increased length for more immersive gameplay
+    // 地形尺寸：不同地形对应不同长度和高度
+    // 这里把“高台”“峡谷”等地形拆成不同几何形状
     wire [9:0] terrain_width =
         (terrain_type == 3'd0) ? 10'd120 :
         (terrain_type == 3'd1) ? 10'd240 :
@@ -143,7 +151,8 @@ module game_logic (
         10'd0;
     wire [9:0] terrain_top = GROUND_Y - terrain_height;
 
-    // Long canyon platforms (terrain_type == 3): two separated layers with jumpable gap
+    // 长峡谷：分成两段平台，中间留出可跳跃的空隙
+    // 这样既增加变化，也避免场景一直只有单一地面
     wire [9:0] canyon_plat_width = 10'd88 + {8'd0, terrain_variant[0], 2'b00};
     wire signed [11:0] canyon_plat_x = terrain_x + $signed(12'sd42);
     wire [9:0] canyon_plat_top = GROUND_Y - (10'd42 + {8'd0, terrain_variant[0], 1'b0});
@@ -156,6 +165,7 @@ module game_logic (
         (terrain_plat2_level == 2'b10) ? (GROUND_Y - 10'd68) : (GROUND_Y - 10'd76);
 
     wire signed [11:0] obstacle_center_x = obstacle_x + (obstacle_width_s >>> 1);
+    // 先判断障碍物和角色是否落在地形/平台上，再决定它们的实际高度
     wire obstacle_over_rise = terrain_active && terrain_is_rise &&
         (obstacle_center_x >= terrain_x) &&
         (obstacle_center_x < terrain_x + $signed({2'b00, terrain_width}));
@@ -206,6 +216,7 @@ module game_logic (
     wire signed [11:0] player_foot_l_s = player_x_s + 12'sd10;
     wire signed [11:0] player_foot_r_s = player_x_s + 12'sd20;
 
+    // 角色是否正在经过地形区域
     wire player_over_terrain = terrain_active &&
         (player_x_s + $signed({2'b00, PLAYER_WIDTH}) > terrain_x) &&
         (player_x_s < terrain_x + terrain_width_s);
@@ -229,6 +240,7 @@ module game_logic (
     wire player_feet_over_rise = terrain_active && terrain_is_rise &&
         (player_foot_l_s >= terrain_x) &&
         (player_foot_r_s < terrain_x + terrain_width_s);
+    // 角色是否真正站在高台顶面上
     wire player_support_rise = player_feet_over_rise &&
         (player_vy >= 0) &&
         (player_bottom >= terrain_top - 10'd2) &&
@@ -280,6 +292,7 @@ module game_logic (
         player_on_canyon_platform ? canyon_plat_top :
         (player_near_terrain_edge ? terrain_top :
         (player_support_rise ? terrain_top : GROUND_Y));
+    // 吸附窗口：当角色接近地面/平台时，把它轻微“吸”到正确高度，减少穿透
     wire floor_snap_window = floor_exists && (player_vy >= 0) &&
         (player_bottom >= floor_y) && (player_bottom <= floor_y + 10'd28);
 
@@ -308,6 +321,7 @@ module game_logic (
     wire [2:0] next_terrain_kind = {1'b0, lfsr[4:3]};
     wire [1:0] next_terrain_variant = {lfsr[7] ^ lfsr[2], lfsr[6] ^ lfsr[0]};
 
+    // BCD加法：用于把分数按十进制逐位递增
     function [3:0] bcd_inc_digit;
         input [3:0] value;
         begin
@@ -315,6 +329,7 @@ module game_logic (
         end
     endfunction
 
+    // 四位BCD分数加1，进位规则和十进制数字一致
     function [15:0] bcd_increment;
         input [15:0] value;
         reg [3:0] ones;
@@ -349,6 +364,7 @@ module game_logic (
         end
     endfunction
 
+    // 5x7点阵字库：用于在画面上显示英文和数字
     function [34:0] font5x7;
         input [7:0] ch;
         begin
@@ -382,6 +398,7 @@ module game_logic (
         end
     endfunction
 
+    // 从点阵字库中取出某一个像素点是否点亮
     function glyph_bit;
         input [34:0] bitmap;
         input [2:0] row;
@@ -397,6 +414,7 @@ module game_logic (
         end
     endfunction
 
+    // 字符放大2倍后的像素判断函数
     function char_px_2x;
         input [9:0] px;
         input [9:0] py;
@@ -418,7 +436,8 @@ module game_logic (
         end
     endfunction
 
-    // Jump logic and movement update
+    // 主时序更新：处理按键、物理、速度、分数和场景移动
+    // 这一块相当于游戏“每一拍”的核心控制逻辑
     always @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
             frame_clk_div <= 0;
@@ -460,7 +479,8 @@ module game_logic (
         end else begin
             lfsr <= {lfsr[6:0], lfsr[7] ^ lfsr[5] ^ lfsr[4] ^ lfsr[3]};
 
-            // 1. Capture jump anytime (state-specific)
+            // 1. 按键处理：开始/重开，或在游戏中执行跳跃和下蹲
+            // 游戏未开始时按确认键进入游戏，进行中则响应动作键
             if (game_state != 1) begin
                 if (confirm_btn) begin
                     game_state <= 1;
@@ -511,26 +531,30 @@ module game_logic (
                 end
             end
             
-            // 2. Physics update at 60Hz
+            // 2. 约60Hz的物理刷新：让画面移动和碰撞判断更稳定
+            // 这里不是每个100MHz时钟都更新，而是按帧节拍统一推进
             if (frame_clk_div < 21'd1_666_666)
                 frame_clk_div <= frame_clk_div + 1;
             else begin
                 frame_clk_div <= 0;
                 
                 if (game_state == 1) begin
-                    // Smooth movement step from fixed-point speed
+                    // 用定点数计算平滑位移，避免速度只能取整数导致发飘
+                    // 这一做法可以让加速过程更平滑
                     frac_sum = {1'b0, move_frac_acc} + {1'b0, speed_fp[7:0]};
                     move_step = speed_fp[19:8] + frac_sum[8];
                     move_frac_acc <= frac_sum[7:0];
 
-                    // Uniform acceleration (slightly slower): update every other frame
+                    // 速度缓慢递增：每隔一帧加一点，让游戏越来越快
+                    // 这样难度会随着时间自然上升
                     speed_accel_phase <= ~speed_accel_phase;
                     if (speed_accel_phase) begin
                         speed_fp <= speed_fp + SPEED_ACCEL_FP;
                     end
                     obstacle_speed <= speed_fp[15:8];
 
-                    // Distance-based score: accumulate traveled pixels and convert to BCD score
+                    // 按前进距离计分：走过一定像素就把BCD分数加1
+                    // 不是按时间，而是按实际跑动距离计分
                     if (dist_accum + {4'd0, move_step_12} >= SCORE_DIST_STEP) begin
                         dist_accum <= dist_accum + {4'd0, move_step_12} - SCORE_DIST_STEP;
                         {score_thousands, score_hundreds, score_tens, score_ones} <=
@@ -539,7 +563,8 @@ module game_logic (
                         dist_accum <= dist_accum + {4'd0, move_step_12};
                     end
 
-                    // Gravity & vertical movement (fall through canyon void)
+                    // 重力与竖直运动：角色下落、起跳、落地都在这里处理
+                    // 这部分决定角色看起来是不是“踩在地上”
                     if (!floor_exists || player_vy < 0 || player_bottom < floor_y || player_bottom > floor_y + 10'd28) begin
                         player_vy <= player_vy + 1'b1;
                         player_y <= player_y + player_vy;
@@ -565,7 +590,8 @@ module game_logic (
                     if (floor_snap_window)
                         player_y <= floor_y - player_height;
 
-                    // Robust platform landing for high-speed descent / double-jump
+                    // 平台落地保护：避免高速下落或二段跳时穿透地形
+                    // 先预测下一拍的位置，再判断是否跨过平台顶面
                     if (land_on_terrain_cross) begin
                         player_y <= terrain_top - player_height;
                         player_vy <= 0;
@@ -582,11 +608,13 @@ module game_logic (
                         jump_count <= 0;
                     end
 
-                    // Canyon death: fall below visible area
+                    // 掉出屏幕底部就判定失败
+                    // 相当于“坠落死亡”的判定
                     if (player_y > 10'd479)
                         game_state <= 2;
 
-                    // Terrain can push player to the left edge when stuck
+                    // 地形卡住时把角色往左边挤，避免停在异常位置
+                    // 这是一个容错处理，防止角色夹在地形边缘
                     if (terrain_side_stuck && (player_x > 0)) begin
                         if (player_x > move_step_12[9:0])
                             player_x <= player_x - move_step_12[9:0];
@@ -597,9 +625,10 @@ module game_logic (
                     if (player_x <= 2)
                         game_state <= 2;
 
-                    // Obstacle movement with offscreen respawn delay to avoid blinking
+                    // 障碍物移动：离屏后先等待，再在右侧重新生成，减少闪烁
+                    // 这样障碍物不会在边界上突然跳出来
                     if (obstacle_active) begin
-                        // Keep moving until obstacle fully leaves the left screen edge.
+                        // 一直移动到障碍物完全离开左边界
                         if ((obstacle_x + obstacle_width_s) > -12'sd2) begin
                             obstacle_x <= obstacle_x - $signed(move_step_12);
                         end else begin
@@ -616,7 +645,8 @@ module game_logic (
                         obstacle_variant <= next_obstacle_variant;
                     end
 
-                    // Terrain movement and respawn with wait to avoid pop-in
+                    // 地形移动和重生：同样先等待，避免突然弹出
+                    // 让场景过渡更自然
                     if (terrain_active) begin
                         if ((terrain_x + terrain_width_s) > -12'sd2)
                             terrain_x <= terrain_x - $signed(move_step_12);
@@ -634,7 +664,8 @@ module game_logic (
                         terrain_plat2_level <= {lfsr[0] ^ lfsr[6], lfsr[3] ^ lfsr[5]};
                     end
 
-                    // Background parallax objects (clouds only)
+                    // 背景视差：这里只画云朵，让背景更有层次
+                    // 云朵速度比前景慢，看起来会有远近感
                     if (cloud1_x + $signed({5'b00000, cloud1_w}) > -12'sd2)
                         cloud1_x <= cloud1_x - $signed({1'b0, move_step_12[11:1]});
                     else begin
@@ -651,7 +682,8 @@ module game_logic (
                         cloud2_h <= 6'd12 + {2'b00, lfsr[3:0]};
                     end
 
-                    // Collision detection
+                    // 碰撞检测：角色碰到障碍物就结束游戏
+                    // 主要检查角色矩形和障碍矩形是否重叠
                     if (obstacle_active && (obstacle_hit_primary || obstacle_hit_secondary)) begin
                         game_state <= 2;
                     end
@@ -660,7 +692,8 @@ module game_logic (
         end
     end
 
-    // Rendering
+    // 像素渲染：根据当前坐标决定这一点应该显示什么颜色
+    // 这是“逐像素上色”的部分，VGA屏幕上的每个点都在这里判断
     always @(*) begin
         if (!video_on)
             rgb = 12'h000;
@@ -671,31 +704,37 @@ module game_logic (
                 logo_rgb = logo_mem[logo_addr];
             end
 
-            // Default background (Sky)
+            // 默认背景：天空
+            // 后面的地面、角色、障碍会在这个基础上覆盖颜色
             rgb = SKY_COLOR;
 
-            // Ground
+            // 地面
+            // y坐标达到地平线以下时，画成地面色
             if (y >= GROUND_Y)
                 rgb = GROUND_COLOR;
 
-            // Terrain (distinct from obstacles)
+            // 地形：高台或坡面，和障碍物分开绘制
+            // 这里先把可走区域画出来，再叠加障碍物
             if (terrain_active && terrain_is_rise &&
                 screen_x_s >= terrain_x && screen_x_s < terrain_x + terrain_width_s &&
                 y >= terrain_top && y < GROUND_Y)
                 rgb = GROUND_COLOR;
 
-            // Terrain highlight line
+            // 地形顶边高亮，方便看清轮廓
+            // 只是一个细线效果，不影响碰撞逻辑
             if (terrain_active && terrain_is_rise &&
                 screen_x_s >= terrain_x && screen_x_s < terrain_x + terrain_width_s && y == terrain_top)
                 rgb = GROUND_COLOR;
 
-            // Canyon feature fill - matches sky color for cohesive look
+            // 峡谷内部直接填成天空色，看起来更像一个空洞
+            // 让长峡谷有“断开”的感觉
             if (terrain_active && terrain_is_canyon &&
                 screen_x_s >= terrain_x && screen_x_s < terrain_x + terrain_width_s &&
                 y >= GROUND_Y)
                 rgb = SKY_COLOR;
 
-            // Canyon platforms (for long canyon) - primary and secondary
+            // 长峡谷的两段平台
+            // 玩家需要跳过中间空隙
             if (terrain_active && terrain_type == 3'd3 &&
                 screen_x_s >= canyon_plat_x && screen_x_s < canyon_plat_x + $signed({2'b00, canyon_plat_width}) &&
                 y >= canyon_plat_top && y < canyon_plat_top + 10'd10)
@@ -705,7 +744,8 @@ module game_logic (
                 y >= canyon_plat2_top && y < canyon_plat2_top + 10'd10)
                 rgb = GROUND_COLOR;
 
-            // Background clouds (parallax)
+            // 背景云朵：不同速度移动，形成视差效果
+            // 这是纯视觉层，不参与碰撞
             if (screen_x_s >= cloud1_x && screen_x_s < cloud1_x + $signed({5'b00000, cloud1_w}) &&
                 y >= 10'd72 && y < 10'd72 + cloud1_h)
                 rgb = 12'hDFF;
@@ -720,7 +760,8 @@ module game_logic (
                 y >= 10'd98 && y < 10'd98 + cloud2_h)
                 rgb = 12'hEFF;
 
-            // Player model (head + body + legs) instead of simple block
+            // 玩家由头、身体和腿组成，不再只是一个方块
+            // 这样人物轮廓更像一个跑者
             if (x >= player_x + 8 && x < player_x + 22 &&
                 y >= player_y && y < player_y + 12)
                 rgb = 12'hFDB;
@@ -736,24 +777,28 @@ module game_logic (
             if (x >= player_x + 10 && x < player_x + 20 && y == player_y + 5)
                 rgb = 12'h000;
 
-            // Player silhouette fill for readability
+            // 轮廓补色：保证角色在天空背景上更清楚
+            // 先画局部，再用轮廓统一一下视觉效果
             if (x >= player_x && x < player_x + PLAYER_WIDTH &&
                 y >= player_y && y < player_y + player_height && rgb == SKY_COLOR)
                 rgb = crouch_active ? 12'h18C : 12'h29F;
 
-            // Crouch accent
+            // 下蹲时的额外细节
+            // 让下蹲状态和站立状态看起来有区别
             if (crouch_active &&
                 x >= player_x + 4 && x < player_x + 26 &&
                 y >= player_y + 18 && y < player_y + 24)
                 rgb = 12'h026;
 
-            // Obstacle (multi-type)
+            // 障碍物主体：根据类型画不同形状
+            // 不同障碍类型对应不同的通关方式
             if (obstacle_active &&
                 screen_x_s >= obstacle_x && screen_x_s < obstacle_x + obstacle_width_s &&
                 y >= obstacle_top && y < obstacle_bottom)
                 rgb = obstacle_color;
 
-            // Static shape enrich: cactus side arms (type 0)
+            // 仙人掌类障碍的侧枝
+            // 只是视觉装饰，不影响碰撞矩形
             if (obstacle_active && obstacle_type == 3'd0 &&
                 screen_x_s >= obstacle_x - 12'sd5 && screen_x_s < obstacle_x &&
                 y >= obstacle_top + 10'd12 && y < obstacle_top + 10'd20)
@@ -763,33 +808,38 @@ module game_logic (
                 y >= obstacle_top + 10'd15 && y < obstacle_top + 10'd23)
                 rgb = 12'h272;
 
-            // Secondary part for richer obstacle type
+            // 带副结构的障碍物
+            // 让障碍看起来更复杂一些
             if (obstacle_active && obstacle_has_second &&
                 screen_x_s >= obstacle2_x && screen_x_s < obstacle2_x + obstacle2_width_s &&
                 y >= obstacle2_top && y < obstacle2_bottom)
                 rgb = 12'hBBB;
 
-            // Static style: center band for tall obstacle
+            // 高障碍的中间装饰条
+            // 用于区分不同障碍的外观
             if (obstacle_active && obstacle_type == 3'd1 &&
                 screen_x_s >= obstacle_x && screen_x_s < obstacle_x + obstacle_width_s &&
                 y >= obstacle_top + 10'd8 && y < obstacle_top + 10'd11)
                 rgb = 12'hB50;
 
-            // Static style: cactus ribs (type 0)
+            // 仙人掌的竖向纹理
+            // 进一步丰富障碍物外观
             if (obstacle_active && obstacle_type == 3'd0 &&
                 screen_x_s >= obstacle_x && screen_x_s < obstacle_x + obstacle_width_s &&
                 y >= obstacle_top && y < obstacle_bottom &&
                 ((screen_x_s == obstacle_x + 12'sd4) || (screen_x_s == obstacle_x + 12'sd9)))
                 rgb = 12'h262;
 
-            // Static style: type-4 frame lines (no sky carving)
+            // 第4类障碍的横向框线
+            // 增加一点机械风格的感觉
             if (obstacle_active && obstacle_type == 3'd4 &&
                 screen_x_s >= obstacle_x && screen_x_s < obstacle_x + obstacle_width_s &&
                 y >= obstacle_top && y < obstacle_bottom &&
                 ((y == obstacle_top + 10'd4) || (y == obstacle_top + 10'd9)))
                 rgb = 12'hB88;
 
-            // Static style: type-6 center seam
+            // 第6类障碍的中缝
+            // 只是装饰线条，不影响玩法
             if (obstacle_active && obstacle_type == 3'd6 &&
                 screen_x_s >= obstacle_x && screen_x_s < obstacle_x + obstacle_width_s &&
                 y >= obstacle_top && y < obstacle_bottom &&
@@ -797,38 +847,44 @@ module game_logic (
                 screen_x_s < obstacle_x + (obstacle_width_s >>> 1) + 12'sd1)
                 rgb = 12'h666;
 
-            // Static style: warning bars for crouch-gate types (2/5)
+            // 需要下蹲通过的障碍，添加警示条
+            // 看到这个样式就知道要蹲下
             if (obstacle_active && (obstacle_type == 3'd2 || obstacle_type == 3'd5) &&
                 screen_x_s >= obstacle_x && screen_x_s < obstacle_x + obstacle_width_s &&
                 y >= obstacle_top && y < obstacle_bottom &&
                 ((y == obstacle_top + 10'd6) || (y == obstacle_top + 10'd12)))
                 rgb = 12'h0DF;
 
-            // Static style: vent slots on crouch-gate types (2/5)
+            // 需要下蹲通过的障碍，添加通风槽细节
+            // 让“门型”障碍更明显
             if (obstacle_active && (obstacle_type == 3'd2 || obstacle_type == 3'd5) &&
                 screen_x_s >= obstacle_x && screen_x_s < obstacle_x + obstacle_width_s &&
                 y >= obstacle_top + 10'd8 && y < obstacle_bottom - 10'd2 &&
                 ((screen_x_s == obstacle_x + 12'sd5) || (screen_x_s == obstacle_x + 12'sd11)))
                 rgb = 12'h045;
 
-            // Static style: top spikes tint (type 7)
+            // 第7类障碍的顶部尖刺
+            // 提示玩家不要直接撞上去
             if (obstacle_active && obstacle_type == 3'd7 &&
                 screen_x_s >= obstacle_x && screen_x_s < obstacle_x + obstacle_width_s &&
                 y >= obstacle_top && y < obstacle_top + 10'd6)
                 rgb = 12'hFD2;
 
-            // Floating obstacle outline
+            // 浮空障碍的上下边框
+            // 主要是做出轮廓，方便辨认
             if (obstacle_type == 3'd2 || obstacle_type == 3'd5)
                 if (obstacle_active &&
                     screen_x_s >= obstacle_x && screen_x_s < obstacle_x + obstacle_width_s &&
                     (y == obstacle_top || y == obstacle_bottom - 1))
                     rgb = 12'hFFF;
 
-            // Speed indicator below ground line
+            // 地面下方的速度条，反映当前难度
+            // 速度越高，条越长
             if (y == (GROUND_Y + 14) && x < (obstacle_speed * 44))
                 rgb = 12'hFF0;
 
-            // HUD: top-right score shown in all states
+            // 右上角HUD：任何状态都显示分数
+            // HUD就是固定在画面上的提示信息
             if (
                 char_px_2x(x, y, 10'd516, 10'd14, 8'h53) || // S
                 char_px_2x(x, y, 10'd528, 10'd14, 8'h43) || // C
@@ -843,7 +899,8 @@ module game_logic (
                 rgb = 12'h111;
             end
 
-            // Start screen
+            // 开始界面
+            // 显示Logo、标题和开始提示
             if (game_state == 0) begin
                 if (x >= LOGO_X && x < (LOGO_X + LOGO_W) && y >= LOGO_Y && y < (LOGO_Y + LOGO_H))
                     rgb = logo_rgb;
@@ -889,7 +946,8 @@ module game_logic (
                     rgb = 12'h222;
             end
 
-            // Game over screen
+            // 结束界面
+            // 显示最终分数和重试提示
             if (game_state == 2) begin
                 if (x >= 10'd90 && x < 10'd550 && y >= 10'd140 && y < 10'd320)
                     rgb = 12'hFDD;
