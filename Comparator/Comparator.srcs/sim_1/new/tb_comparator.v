@@ -1,83 +1,43 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date: 2026/03/26 11:20:48
-// Design Name: 
-// Module Name: tb_comp
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-// 
-//////////////////////////////////////////////////////////////////////////////////
+`include "Comparator/Comparator.srcs/sources_1/new/comparator.v"//修复路径错误，写成工作区相对路径
+module tb_comp;
+wire AGTB,ALTB,AEQB;
+reg[1:0]A,B;
+comp u_comp(.A(A[1:0]),.B(B[1:0]),.AGTB (AGTB),.ALTB (ALTB),.AEQB (AEQB)); 
+initial begin
+   $dumpfile("tb_comparator.vcd");
+   $dumpvars(0, tb_comp);
+end
 
-
-module tb_comp(
-
-    );
-    reg [1:0] A;
-    reg [1:0] B;
-    wire AGTB;
-    wire ALTB;
-    wire AEQB;
-
-    integer i;
-    integer j;
-    integer errors;
-
-    // DUT instance
-    comp uut (
-        .A(A),
-        .B(B),
-        .AGTB(AGTB),
-        .ALTB(ALTB),
-        .AEQB(AEQB)
-    );
-
-    initial begin
-        errors = 0;
-        A = 2'b00;
-        B = 2'b00;
-
-        $display("Start comparator test...");
-        $display("   t   A  B | AGTB ALTB AEQB");
-
-        for (i = 0; i < 4; i = i + 1) begin
-            for (j = 0; j < 4; j = j + 1) begin
-                A = i[1:0];
-                B = j[1:0];
-                #10;
-
-                $display("%4t  %0d  %0d |   %0b    %0b    %0b", $time, A, B, AGTB, ALTB, AEQB);
-
-                if ((A > B) && (AGTB !== 1'b1 || ALTB !== 1'b0 || AEQB !== 1'b0)) begin
-                    errors = errors + 1;
-                    $display("ERROR: A>B but output is wrong");
-                end
-                else if ((A < B) && (AGTB !== 1'b0 || ALTB !== 1'b1 || AEQB !== 1'b0)) begin
-                    errors = errors + 1;
-                    $display("ERROR: A<B but output is wrong");
-                end
-                else if ((A == B) && (AGTB !== 1'b0 || ALTB !== 1'b0 || AEQB !== 1'b1)) begin
-                    errors = errors + 1;
-                    $display("ERROR: A==B but output is wrong");
-                end
-            end
-        end
-
-        if (errors == 0)
-            $display("All test cases passed.");
-        else
-            $display("Test finished with %0d error(s).", errors);
-
-        $finish;
+initial
+    begin
+         // 初始状态：A=00, B从00→11扫描
+        A = 2'b00;  // SW1-SW0 
+        B = 2'b00;  // SW3-SW2 
+        #10 B = 2'b01;  // 10ns后：B=01
+        #10 B = 2'b10;  // 20ns：B=10
+        #10 B = 2'b11;  // 30ns：B=11
+        
+        // 第二阶段：A=01, B全组合测试
+        #10 A = 2'b01;  // 40ns 
+           B = 2'b00;  
+        #10 B = 2'b01;  // 50ns
+        #10 B = 2'b10;  // 60ns
+        #10 B = 2'b11;  // 70ns
+        
+        // 第三阶段：A=10, B全组合测试
+        #10 A = 2'b10;  // 80ns： 
+           B = 2'b00;
+        #10 B = 2'b01;  // 90ns
+        #10 B = 2'b10;  // 100ns
+        #10 B = 2'b11;  // 110ns
+        
+        // 第四阶段：A=11, B全组合测试
+        #10 A = 2'b11;  // 120ns
+        #10 B = 2'b01;  // 130ns
+        #10 B = 2'b10;  // 140ns
+        #10 B = 2'b11;  // 150ns：最终测试点
+        
+        #10 $finish;   
     end
 endmodule
